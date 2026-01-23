@@ -1,0 +1,40 @@
+# BOSH Deployment Variables for vCenter API Gateway
+# Copy this file to vars.yml and update with your values
+# Usage: bosh -d vcenter-gateway deploy nginx.yml -l vars.yml
+
+# vCenter Configuration (REQUIRED)
+vcenter_host: vcenter.example.com  # Replace with your vCenter hostname or IP
+
+# Availability Zone (REQUIRED)
+az_name: AZ1  # Update with your AZ name
+
+# Network Configuration (REQUIRED)
+network_name: Infra  # Update with your BOSH network name
+
+# VM Configuration
+vm_type: medium.mem  # Options: small, medium, large, etc.
+instances: 1         # Number of gateway instances (1 or more for HA)
+
+# Stemcell
+stemcell_os: ubuntu-jammy
+stemcell_version: latest
+
+# Release Version
+nginx_version: 1.21.6
+
+# Optional: Custom timeout values (uncomment to override)
+# proxy_connect_timeout: 60
+# proxy_send_timeout: 300
+# proxy_read_timeout: 300
+
+# Optional: SSL Certificates (for production)
+# Uncomment and provide your certificates if not using auto-generated self-signed certs
+# ssl_certificate: |
+#   -----BEGIN CERTIFICATE-----
+#   [Your certificate content]
+#   -----END CERTIFICATE-----
+#
+# ssl_key: |
+#   -----BEGIN PRIVATE KEY-----
+#   [Your private key content]
+#   -----END PRIVATE KEY-----

@@ -1,0 +1,262 @@
+---
+name: nginx
+
+releases:
+- name: nginx
+  version: 1.21.6
+
+stemcells:
+- alias: default
+  os: ubuntu-jammy
+  version: latest
+
+update:
+  canaries: 2
+  max_in_flight: 1
+  canary_watch_time: 5000-60000
+  update_watch_time: 5000-60000
+
+instance_groups:
+- name: nginx
+  azs: [AZ1]
+  instances: 1
+  jobs:
+  - name: nginx
+    release: nginx
+    properties:
+       # IMPORTANT: Update this with your actual vCenter hostname or IP
+       vcenter_host: "VCENTER_HOST_PLACEHOLDER"
+
+       nginx_conf: |
+         # NGINX API Gateway Configuration for Bosh Director CPI to vCenter
+         user nobody vcap;
+         worker_processes auto;
+         error_log /var/vcap/sys/log/nginx/error.log warn;
+         pid /var/vcap/sys/run/nginx/nginx.pid;
+
+         events {
+           worker_connections 1024;
+           use epoll;
+         }
+
+         http {
+           include /var/vcap/packages/nginx/conf/mime.types;
+           default_type application/octet-stream;
+
+           # Custom log format for detailed API call tracking
+           log_format vcenter_api '$remote_addr - $remote_user [$time_local] '
+                                 '"$request" $status $body_bytes_sent '
+                                 '"$http_referer" "$http_user_agent" '
+                                 'rt=$request_time uct="$upstream_connect_time" '
+                                 'uht="$upstream_header_time" urt="$upstream_response_time"';
+
+           access_log /var/vcap/sys/log/nginx/vcenter-access.log vcenter_api;
+
+           # Performance tuning
+           sendfile on;
+           tcp_nopush on;
+           tcp_nodelay on;
+           keepalive_timeout 65;
+           types_hash_max_size 2048;
+
+           # Increase buffer sizes for large vCenter API responses
+           client_body_buffer_size 128k;
+           client_max_body_size 100M;
+           client_header_buffer_size 1k;
+           large_client_header_buffers 4 16k;
+           proxy_buffer_size 128k;
+           proxy_buffers 4 256k;
+           proxy_busy_buffers_size 256k;
+
+           # SSL settings
+           ssl_protocols TLSv1.2 TLSv1.3;
+           ssl_ciphers HIGH:!aNULL:!MD5;
+           ssl_prefer_server_ciphers on;
+           ssl_session_cache shared:SSL:10m;
+           ssl_session_timeout 10m;
+
+           # Upstream vCenter server
+           upstream vcenter_backend {
+             # This will be replaced by pre_start script with actual vCenter host
+             server ((vcenter_host)):443 max_fails=3 fail_timeout=30s;
+             keepalive 32;
+             keepalive_timeout 60s;
+           }
+
+           # HTTPS server - API Gateway endpoint
+           server {
+             listen 443 ssl http2;
+             server_name _;
+
+             # SSL certificate for the gateway
+             ssl_certificate /var/vcap/jobs/nginx/etc/ssl/gateway.crt;
+             ssl_certificate_key /var/vcap/jobs/nginx/etc/ssl/gateway.key;
+
+             ssl_protocols TLSv1.2 TLSv1.3;
+             ssl_ciphers 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384';
+             ssl_prefer_server_ciphers on;
+
+             access_log /var/vcap/sys/log/nginx/vcenter-access.log vcenter_api;
+             error_log /var/vcap/sys/log/nginx/vcenter-error.log info;
+
+             # Health check endpoint
+             location /nginx-health {
+               access_log off;
+               return 200 "healthy\n";
+               add_header Content-Type text/plain;
+             }
+
+             # vCenter SOAP API endpoint
+             location ~ ^/sdk {
+               proxy_pass https://vcenter_backend;
+               proxy_set_header Host ((vcenter_host));
+               proxy_set_header X-Real-IP $remote_addr;
+               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+               proxy_set_header Authorization $http_authorization;
+               proxy_pass_header Authorization;
+
+               proxy_ssl_verify off;
+               proxy_ssl_server_name on;
+               proxy_ssl_protocols TLSv1.2 TLSv1.3;
+
+               proxy_http_version 1.1;
+               proxy_set_header Connection "";
+
+               proxy_connect_timeout 60s;
+               proxy_send_timeout 600s;
+               proxy_read_timeout 600s;
+
+               proxy_buffering on;
+               proxy_buffer_size 128k;
+               proxy_buffers 4 256k;
+               proxy_busy_buffers_size 256k;
+               proxy_redirect off;
+             }
+
+             # vCenter REST API endpoint
+             location ~ ^/rest {
+               proxy_pass https://vcenter_backend;
+               proxy_set_header Host ((vcenter_host));
+               proxy_set_header X-Real-IP $remote_addr;
+               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+               proxy_set_header Authorization $http_authorization;
+               proxy_pass_header Authorization;
+
+               proxy_ssl_verify off;
+               proxy_ssl_server_name on;
+               proxy_ssl_protocols TLSv1.2 TLSv1.3;
+
+               proxy_http_version 1.1;
+               proxy_set_header Connection "";
+
+               proxy_connect_timeout 60s;
+               proxy_send_timeout 300s;
+               proxy_read_timeout 300s;
+
+               proxy_redirect off;
+             }
+
+             # vCenter vAPI endpoint
+             location ~ ^/api {
+               proxy_pass https://vcenter_backend;
+               proxy_set_header Host ((vcenter_host));
+               proxy_set_header X-Real-IP $remote_addr;
+               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+               proxy_set_header Authorization $http_authorization;
+               proxy_pass_header Authorization;
+
+               proxy_ssl_verify off;
+               proxy_ssl_server_name on;
+               proxy_ssl_protocols TLSv1.2 TLSv1.3;
+
+               proxy_http_version 1.1;
+               proxy_set_header Connection "";
+
+               proxy_connect_timeout 60s;
+               proxy_send_timeout 300s;
+               proxy_read_timeout 300s;
+
+               proxy_redirect off;
+             }
+
+             # Default location - proxy all other requests
+             location / {
+               proxy_pass https://vcenter_backend;
+               proxy_set_header Host ((vcenter_host));
+               proxy_set_header X-Real-IP $remote_addr;
+               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+               proxy_set_header X-Forwarded-Proto $scheme;
+               proxy_set_header Authorization $http_authorization;
+               proxy_pass_header Authorization;
+
+               proxy_ssl_verify off;
+               proxy_ssl_server_name on;
+               proxy_ssl_protocols TLSv1.2 TLSv1.3;
+
+               proxy_http_version 1.1;
+               proxy_set_header Connection "";
+
+               proxy_connect_timeout 60s;
+               proxy_send_timeout 300s;
+               proxy_read_timeout 300s;
+
+               proxy_buffering on;
+               proxy_buffer_size 128k;
+               proxy_buffers 4 256k;
+               proxy_busy_buffers_size 256k;
+               proxy_redirect off;
+             }
+           }
+
+           # HTTP to HTTPS redirect
+           server {
+             listen 80;
+             server_name _;
+             return 301 https://$host$request_uri;
+           }
+         }
+
+       pre_start: |
+         #!/bin/bash -ex
+
+         echo "Setting up NGINX API Gateway for vCenter..."
+
+         # Create necessary directories
+         SSL_DIR=/var/vcap/jobs/nginx/etc/ssl
+         mkdir -p $SSL_DIR
+         mkdir -p /var/vcap/sys/run/nginx
+
+         # Generate self-signed SSL certificates if they don't exist
+         if [ ! -f $SSL_DIR/gateway.crt ]; then
+           echo "Generating self-signed SSL certificates..."
+
+           # Generate private key
+           openssl genrsa -out $SSL_DIR/gateway.key 2048
+
+           # Generate certificate signing request
+           openssl req -new -key $SSL_DIR/gateway.key -out $SSL_DIR/gateway.csr \
+             -subj "/C=US/ST=State/L=City/O=Organization/OU=IT/CN=bosh-vcenter-gateway"
+
+           # Generate self-signed certificate (valid for 365 days)
+           openssl x509 -req -days 365 -in $SSL_DIR/gateway.csr \
+             -signkey $SSL_DIR/gateway.key -out $SSL_DIR/gateway.crt
+
+           # Clean up CSR
+           rm -f $SSL_DIR/gateway.csr
+
+           echo "SSL certificates generated successfully"
+         else
+           echo "SSL certificates already exist"
+         fi
+
+         # Set proper permissions
+         chmod 600 $SSL_DIR/gateway.key
+         chmod 644 $SSL_DIR/gateway.crt
+         chown -R vcap:vcap $SSL_DIR
+
+         echo "Pre-start complete: NGINX API Gateway ready"
+
+  vm_type: medium.mem
+  stemcell: default
+  networks:
+  - name: Infra

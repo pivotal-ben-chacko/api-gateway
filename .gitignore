@@ -1,0 +1,36 @@
+# SSL Certificates and Private Keys
+ssl/*.key
+ssl/*.crt
+ssl/*.csr
+ssl/*.pem
+ssl/*.p12
+ssl/*.pfx
+
+# Logs
+logs/
+*.log
+
+# Backup files
+*.backup
+*.bak
+*~
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker volumes
+data/
+
+# Environment files (if you add them later)
+.env
+.env.local
+
+# Keep README files
+!ssl/README.md
