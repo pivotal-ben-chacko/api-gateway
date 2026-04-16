@@ -35,7 +35,12 @@ This gateway can be deployed in multiple ways:
    - See [Docker Setup](#docker-setup) below
    - Quick start: `./quick-start.sh`
 
-3. **Traditional NGINX Installation** (Manual)
+3. **Kubernetes Deployment**
+   - Run as a Deployment behind a LoadBalancer Service
+   - ConfigMap + Secret driven; scales horizontally
+   - See [Kubernetes Setup](#kubernetes-setup) below
+
+4. **Traditional NGINX Installation** (Manual)
    - Direct installation on VM or bare metal
    - Full control over configuration
    - See [Manual Installation](#manual-installation) below
@@ -56,6 +61,11 @@ api-gateway/
 ├── docker-compose.yml              # Docker Compose configuration
 ├── Dockerfile                      # Docker image definition
 ├── quick-start.sh                  # Docker quick start script
+├── k8s/
+│   ├── configmap.yaml             # nginx.conf + vcenter-proxy.conf.template
+│   ├── secret.yaml                # TLS cert/key (placeholder)
+│   ├── deployment.yaml            # Deployment with env-driven VCENTER_HOST
+│   └── service.yaml               # LoadBalancer Service (443/80)
 ├── README.md                       # This file
 └── BOSH-DEPLOYMENT.md             # Detailed BOSH deployment guide
 ```
@@ -70,6 +80,11 @@ api-gateway/
 ### For Docker Deployment
 - Docker and docker-compose installed
 - OpenSSL (included in Docker image)
+
+### For Kubernetes Deployment
+- A Kubernetes cluster (1.24+) and `kubectl` configured against it
+- Cluster support for `LoadBalancer` Services, or an Ingress controller if you prefer to front the gateway with Ingress
+- TLS cert and key for the gateway-facing connection (self-signed via `ssl/generate-self-signed-cert.sh` is fine for dev)
 
 ### For Manual Installation
 - NGINX 1.18+ (with SSL and HTTP/2 support)
@@ -110,6 +125,23 @@ vi conf.d/vcenter-proxy.conf  # Update VCENTER_HOST
 ./quick-start.sh
 ```
 
+### Kubernetes Deployment
+
+```bash
+# 1. Create the TLS secret from your gateway cert/key
+kubectl create secret tls api-gateway-tls \
+  --cert=ssl/gateway.crt --key=ssl/gateway.key
+
+# 2. Set your vCenter host in the Deployment env
+vi k8s/deployment.yaml  # set VCENTER_HOST value
+
+# 3. Apply the manifests
+kubectl apply -f k8s/configmap.yaml -f k8s/deployment.yaml -f k8s/service.yaml
+
+# 4. Grab the external IP
+kubectl get svc api-gateway
+```
+
 ## BOSH Deployment
 
 For production deployments with BOSH, see the comprehensive guide: [BOSH-DEPLOYMENT.md](BOSH-DEPLOYMENT.md)
@@ -126,6 +158,64 @@ Key BOSH configuration file: `nginx.yml`
 ## Docker Setup
 
 For development and testing with Docker, use the provided Docker Compose setup.
+
+## Kubernetes Setup
+
+The `k8s/` directory contains four manifests that deploy the gateway as a standard Kubernetes workload:
+
+- `configmap.yaml` — holds `nginx.conf` and `vcenter-proxy.conf.template`. The template uses `${VCENTER_HOST}` and is rendered by the nginx image's built-in envsubst mechanism (files in `/etc/nginx/templates/` are processed to `/etc/nginx/conf.d/` at startup).
+- `secret.yaml` — a `kubernetes.io/tls` Secret for the gateway-facing cert and key. Create it from your existing cert instead of editing the file:
+  ```bash
+  kubectl create secret tls api-gateway-tls \
+    --cert=ssl/gateway.crt --key=ssl/gateway.key
+  ```
+- `deployment.yaml` — 2 replicas of `nginx:1.27-alpine`, mounts the ConfigMap and Secret, sets `VCENTER_HOST` via env, and uses `NGINX_ENVSUBST_FILTER=VCENTER_HOST` so only that variable is substituted (nginx's own `$vars` are preserved). Readiness and liveness probes hit `/nginx-health`.
+- `service.yaml` — a `LoadBalancer` Service exposing 443 (and 80 for the HTTPS redirect).
+
+### Configure
+
+Before applying, edit the `VCENTER_HOST` env value in `k8s/deployment.yaml`:
+
+```yaml
+env:
+  - name: VCENTER_HOST
+    value: vcenter.example.com  # ← replace with your vCenter hostname/IP
+```
+
+### Deploy
+
+```bash
+kubectl apply -f k8s/configmap.yaml -f k8s/deployment.yaml -f k8s/service.yaml
+kubectl rollout status deploy/api-gateway
+kubectl get svc api-gateway   # note the EXTERNAL-IP
+```
+
+Point your Bosh Director's CPI config at the Service's external IP/hostname (see [Configure Bosh Director](#6-configure-bosh-director)).
+
+### Verify
+
+```bash
+# Health check through the LoadBalancer
+curl -k https://<EXTERNAL-IP>/nginx-health
+
+# Tail nginx logs across all replicas
+kubectl logs -l app=api-gateway -f
+```
+
+All nginx access and error logs — including Bosh Director CPI calls proxied to vCenter — are written to `/dev/stdout` and `/dev/stderr`, so `kubectl logs` captures them directly. Entries use the `vcenter_api` log format with timing fields (`rt`, `uct`, `uht`, `urt`) and the request body.
+
+With multiple replicas, requests are load-balanced across pods and each request appears in exactly one pod's logs. The `-l app=api-gateway` selector aggregates across all pods, which is usually what you want. To isolate a single pod:
+
+```bash
+kubectl logs <pod-name> -f
+```
+
+### Notes and Caveats
+
+- **Logs**: the ConfigMap sends all nginx access/error logs to `/dev/stdout` and `/dev/stderr`, so `kubectl logs -l app=api-gateway` shows everything. If you'd rather ship logs to files on a persistent volume, change the `access_log`/`error_log` paths back to `/var/log/nginx/...` and mount a PVC at that path in place of the `emptyDir`.
+- **Bare-metal clusters**: if your cluster doesn't provision `LoadBalancer` Services, change `spec.type` to `NodePort` in `service.yaml`, or front the Deployment with an Ingress. Since nginx here already terminates TLS, prefer an Ingress in TCP passthrough mode (or skip Ingress and use `NodePort`) rather than double-terminating TLS.
+- **Scaling**: the Deployment is stateless — adjust `spec.replicas` freely. A HorizontalPodAutoscaler works if you add CPU metrics-server.
+- **Cert rotation**: re-create the `api-gateway-tls` Secret with the new cert; nginx does not auto-reload on Secret changes, so trigger a rollout: `kubectl rollout restart deploy/api-gateway`.
 
 ## Manual Installation
 
