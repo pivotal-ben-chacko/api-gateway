@@ -6,6 +6,11 @@ metadata:
     app: api-gateway
 spec:
   type: LoadBalancer
+  # Restrict access to the Bosh Director. Use a /32 CIDR for a single
+  # Director IP, or a wider CIDR for a subnet. Remove the field entirely
+  # to allow all sources.
+  loadBalancerSourceRanges:
+    - 192.0.2.42/32   # ← replace with your Bosh Director's IP (or subnet CIDR)
   selector:
     app: api-gateway
   ports:

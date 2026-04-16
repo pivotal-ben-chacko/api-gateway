@@ -170,7 +170,7 @@ The `k8s/` directory contains four manifests that deploy the gateway as a standa
     --cert=ssl/gateway.crt --key=ssl/gateway.key
   ```
 - `deployment.yaml` — 2 replicas of `nginx:1.27-alpine`, mounts the ConfigMap and Secret, sets `VCENTER_HOST` via env, and uses `NGINX_ENVSUBST_FILTER=VCENTER_HOST` so only that variable is substituted (nginx's own `$vars` are preserved). Readiness and liveness probes hit `/nginx-health`.
-- `service.yaml` — a `LoadBalancer` Service exposing 443 (and 80 for the HTTPS redirect).
+- `service.yaml` — a `LoadBalancer` Service exposing 443 (and 80 for the HTTPS redirect). Access is restricted to the Bosh Director via `spec.loadBalancerSourceRanges` — edit the CIDR(s) there to match your Director's subnet, or remove the field to allow all sources.
 
 ### Configure
 
@@ -181,6 +181,16 @@ env:
   - name: VCENTER_HOST
     value: vcenter.example.com  # ← replace with your vCenter hostname/IP
 ```
+
+And set the Bosh Director's IP (or subnet) in `k8s/service.yaml`:
+
+```yaml
+loadBalancerSourceRanges:
+  - 192.0.2.42/32   # single Director IP
+  # - 10.0.0.0/24   # …or a whole subnet if the Director can move
+```
+
+Use a `/32` CIDR to lock access to a single Director IP, or a wider CIDR for a subnet. Multiple entries are allowed. The cloud load balancer drops any traffic from outside these ranges before it reaches the pod. Supported on GKE, EKS, AKS, and most other cloud providers; on bare-metal clusters you'll need to enforce the restriction at your load balancer (MetalLB, external LB) or switch to the nginx `allow`/`deny` approach instead.
 
 ### Deploy
 
