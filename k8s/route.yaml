@@ -1,0 +1,28 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+  annotations:
+    # Restrict access to the Bosh Director. Space-separated list of IPs
+    # or CIDRs. Remove this annotation to allow all sources.
+    haproxy.router.openshift.io/ip_whitelist: "192.0.2.42"
+spec:
+  # Leave host unset to let OpenShift auto-assign a hostname under the
+  # cluster's apps domain (e.g. api-gateway-<namespace>.apps.<cluster>),
+  # or set it explicitly to a custom hostname you control.
+  # host: api-gateway.apps.example.com
+  to:
+    kind: Service
+    name: api-gateway
+    weight: 100
+  port:
+    targetPort: https
+  tls:
+    # Passthrough: the router forwards the TLS stream untouched to nginx,
+    # which terminates TLS using the cert in the api-gateway-tls Secret.
+    # Bosh sees the gateway's cert directly, not the router's wildcard cert.
+    termination: passthrough
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

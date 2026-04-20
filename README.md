@@ -65,7 +65,8 @@ api-gateway/
 │   ├── configmap.yaml             # nginx.conf + vcenter-proxy.conf.template
 │   ├── secret.yaml                # TLS cert/key (placeholder)
 │   ├── deployment.yaml            # Deployment with env-driven VCENTER_HOST
-│   └── service.yaml               # LoadBalancer Service (443/80)
+│   ├── service.yaml               # LoadBalancer Service (443/80)
+│   └── route.yaml                 # OpenShift Route with TLS passthrough (optional)
 ├── README.md                       # This file
 └── BOSH-DEPLOYMENT.md             # Detailed BOSH deployment guide
 ```
@@ -224,6 +225,7 @@ kubectl logs <pod-name> -f
 
 - **Logs**: the ConfigMap sends all nginx access/error logs to `/dev/stdout` and `/dev/stderr`, so `kubectl logs -l app=api-gateway` shows everything. If you'd rather ship logs to files on a persistent volume, change the `access_log`/`error_log` paths back to `/var/log/nginx/...` and mount a PVC at that path in place of the `emptyDir`.
 - **Bare-metal clusters**: if your cluster doesn't provision `LoadBalancer` Services, change `spec.type` to `NodePort` in `service.yaml`, or front the Deployment with an Ingress. Since nginx here already terminates TLS, prefer an Ingress in TCP passthrough mode (or skip Ingress and use `NodePort`) rather than double-terminating TLS.
+- **OpenShift**: prefer the Route in `k8s/route.yaml` over a `LoadBalancer` Service. The Route uses TLS passthrough so Bosh still sees the gateway's cert directly (no re-encryption at the router). Access restriction moves from `loadBalancerSourceRanges` on the Service to the `haproxy.router.openshift.io/ip_whitelist` annotation on the Route. You can either drop the Service entirely (Routes work against `ClusterIP` too — change the Service `type` to `ClusterIP` and skip `loadBalancerSourceRanges`), or keep the LoadBalancer Service alongside the Route.
 - **Scaling**: the Deployment is stateless — adjust `spec.replicas` freely. A HorizontalPodAutoscaler works if you add CPU metrics-server.
 - **Cert rotation**: re-create the `api-gateway-tls` Secret with the new cert; nginx does not auto-reload on Secret changes, so trigger a rollout: `kubectl rollout restart deploy/api-gateway`.
 
