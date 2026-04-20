@@ -40,6 +40,8 @@ spec:
             - name: tls
               mountPath: /etc/nginx/ssl
               readOnly: true
+            - name: nginx-conf-d
+              mountPath: /etc/nginx/conf.d
             - name: nginx-logs
               mountPath: /var/log/nginx
             - name: nginx-cache
@@ -74,6 +76,8 @@ spec:
         - name: tls
           secret:
             secretName: api-gateway-tls
+        - name: nginx-conf-d
+          emptyDir: {}
         - name: nginx-logs
           emptyDir: {}
         - name: nginx-cache
